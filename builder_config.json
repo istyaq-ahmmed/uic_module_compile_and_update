@@ -1,0 +1,20 @@
+{
+  "ssh": {
+    "host": "",
+    "username": "",
+    "password": "",
+    "port": 22
+  },
+  "api": {
+    "v1": {
+      "apiKey": "",
+      "cdnDomain": "",
+      "root": ""
+    },
+    "v2": {
+      "apiKey": "",
+      "cdnDomain": "uicommercial.com",
+      "root": "https://beta.uicommercial.com/api/"
+    }
+  }
+}
