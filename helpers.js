@@ -6,6 +6,8 @@ const cp=require('child_process');
 const scp = require('node-scp');
 const axios=require('axios')
 const ts = require('typescript');
+const crypto = require("crypto");
+
 function fileExists(loc){
     if (fs.existsSync(loc)) {
         if (fs.lstatSync(loc).isFile()) {
@@ -31,9 +33,10 @@ function dirExists(loc){
     }
 }
 
-function makeDirIfNotExist(loc=''){
+function makeDirIfNotExist(loc='',rm=false){
     // console.log('Mkdir:',loc);
     if(!fs.existsSync(loc)){
+        if(rm) fs.rmSync(loc,{recursive:true});
         fs.mkdirSync(loc,{recursive:true})
     }
     return loc
@@ -291,6 +294,59 @@ async function buildNodeBackendEnd(id,cwd,webpackOut,tscOut,exe) {
                     }
     }
 }
+function checkForDotEnvAndInstall(cwd,venvPath){
+    try {
+        if(!fs.existsSync(venvPath)){
+            cp.execSync(`python -m venv .env`, {
+                cwd: cwd,
+                stdio: 'inherit',
+                shell: true
+            });
+            cp.execSync(`"${path.join(venvPath,"Scripts", "python.exe")}" install -r requirements.txt`, {
+                cwd: cwd,
+                stdio: 'inherit',
+                shell: true
+            });
+            return 'OK';
+        }else{
+            return "OK";
+        }
+    } catch (error) {
+        return "ERR";
+    }
+}
+function getFileHash(filePath, algorithm = "sha256") {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash(algorithm);
+    const stream = fs.createReadStream(filePath);
+
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", (err) => reject(err));
+  });
+}
+async function buildPython(cwd,version) {
+    try {
+        const venvPath=path.join(cwd,'.env');
+        const venvCheck=checkForDotEnvAndInstall(cwd,venvPath);
+        if(venvCheck=='OK'){
+            cp.execSync(`"${path.join(venvPath,"Scripts", "python.exe")}" setup.py --quiet ${version} build`, {
+                cwd: cwd,
+                stdio: 'inherit',
+                shell: true
+            });
+            return {
+                success:true,
+                message: "OK"
+            }
+        }
+    } catch (error) {
+        return {
+                success:false,
+                message: "Python compilation failed."
+            }
+    }
+}
 
 async function runFrontEndCompileCommand(f_cwd,output){
     try {
@@ -422,10 +478,13 @@ async function getProcessInfo(root,token,id) {
                         versions:{
                             latest:d.versions?.latest,
                             required:d.versions?.required,
-                            url:d.versions?.url
+                            url:d.versions?.url,
+                            zipHash:d.versions?.zipHash,
+                            exeHash:d.versions?.exeHash
                         },
                         Prices:d.Prices,
-                        lastUpdatedBy:d.updatedBy?.Name
+                        lastUpdatedBy:d.updatedBy?.Name,
+                        lastUpdatedByAt:(new Date(res.data.item.updated_at)).toString()
                     }
         }else{
             console.log(res.data)
@@ -486,7 +545,6 @@ function getDotInfo(cwd) {
         throw new Error('Error getting .info file.')
     }
 }
-
 function incrementVersion(v=''){
     const vSplit=v.split('.');
     vSplit[vSplit.length-1]=String(Number(vSplit[vSplit.length-1])+1)
@@ -515,27 +573,13 @@ function makeRequiredDirs(root,environment='nodeJS'){
             mode:'python',
             log,
             archive,
+            exe:path.join(root,'exe.win-amd64-3.10'),
             ui
         }
 
     }
 }
-function packageNodeModuleCommands(majorVersion,id){
-    const commands=[]
-    if(majorVersion=='2'){
-        commands.push({
-            type:"dir",
-            from:'./build/UI',
-            to:'./UI'
-        })
-        commands.push({
-            type:"file",
-            from:`./build/exe/${id}.exe`,
-            to:`./${id}.exe`
-        })
-    }
-    return commands
-}
+
 function includeFiles(cwd,to,commands=[]){
     for(let c of commands){
         if(c.type=="dir"){
@@ -551,11 +595,29 @@ function includeFiles(cwd,to,commands=[]){
 function packageModule(cwd,env,majorVersion,id,includedFiles=[]){
     const files=[]
     includedFiles.forEach(e=>files.push(e))
-    if(env=="nodeJS"){
-        const pathR=makeDirIfNotExist(path.join(cwd,'build',id))
-        packageNodeModuleCommands(majorVersion,id).forEach(e=>files.push(e));
-        includeFiles(cwd,pathR,files);
+    const pathR= makeDirIfNotExist(path.join(cwd,'build',id))
+    if(majorVersion=='2'){
+            files.push({
+                type:"dir",
+                from:'./build/UI',
+                to:'./UI'
+            })
     }
+    if(env=="nodeJS"){
+        files.push({
+            type:"file",
+            from:`./build/exe/${id}.exe`,
+            to:`./${id}.exe`
+        })
+        
+    }else if(env=='python'){
+        files.push({
+            type:"dir",
+            from:`./build/exe.win-amd64-3.10`,
+            to:``
+        })
+    }
+    includeFiles(cwd,pathR,files);
 }
 function makeDotInfoFile(id,name,version,dest){
     fs.writeFileSync(dest,
@@ -595,5 +657,7 @@ module.exports={
     makeRequiredDirs,
     buildNodeBackendEnd,
     packageModule,
-    makeDotInfoFile
+    makeDotInfoFile,
+    buildPython,
+    getFileHash
 }

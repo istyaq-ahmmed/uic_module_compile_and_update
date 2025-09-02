@@ -2,8 +2,6 @@
 const cp=require('child_process');
 const fs=require('fs');
 const path=require('path');
-const yargs = require('yargs/yargs');
-const { hideBin } = require('yargs/helpers');
 const { dirExists,
         fileExists,
         makeDirIfNotExist,
@@ -18,19 +16,19 @@ const { dirExists,
         makeRequiredDirs,
         buildNodeBackendEnd,
         packageModule,
-        makeDotInfoFile
+        makeDotInfoFile,
+        buildPython,
+        getFileHash
     }=require('./helpers');
 
 
 async function build(majorVersion){
-
     const CWD=process.cwd();
     const EXE_D=path.dirname(typeof process.env.NODE_SEA === 'string'?process.execPath:require.main.filename)
     const MODULE_ENV=fileExists(path.join(CWD,'package.json'))?
                         "nodeJS":
-                        // TODO Python support
-                        // dirExists(path.join(CWD,'.env'))?
-                        // 'python':
+                        fileExists(path.join(CWD,'requirements.txt'))?
+                        'python':
                         null;
     if(MODULE_ENV==null) throw new Error("Unsupported environment.");
 
@@ -107,15 +105,23 @@ async function build(majorVersion){
     if(build_config.build.backend.skip==false){
         if(MODULE_ENV=='nodeJS'){
             parallelBuildJobs.push(buildNodeBackendEnd(processInfo._id,CWD,dirs.webpack,dirs.tsc,dirs.exe));
+        }else if(MODULE_ENV=='python'){
+            parallelBuildJobs.push(buildPython(CWD,newVersion));
         }
     }
+    const errors=[]
     for (let prom of parallelBuildJobs){
         await prom
         if(prom.success==false){
             console.log(prom.message)
-            throw prom.err
+            errors.push(prom.err)
         }
     }
+    if(errors.length>0){
+        throw errors[0]
+    }
+
+
     const includeFiles=Array.isArray(build_config.build.backend.include)?build_config.build.backend.include:[]
     makeDotInfoFile(processInfo._id,processInfo.Name,newVersion,path.join(CWD,'build','.info'))
     includeFiles.push({
@@ -125,12 +131,35 @@ async function build(majorVersion){
     })
     packageModule(CWD,MODULE_ENV,majorVersion,processInfo._id,includeFiles);
     const finalZipFrom=path.join(CWD,'build',`${processInfo._id}`)
-    const finalZipTo=path.join(CWD,'build',`${processInfo._id}.zip`)
+    const finalZipTo=path.join(CWD,'build',`${uploadZipName}`)
     await zipDir(finalZipFrom,finalZipTo)
-    await updateProcessInfo(apiConfig.root,apiConfig.apiKey,dotInfo.id,newVersion,processInfoUpdated.versions.url)
-
+    const execPath=path.join(dirs.exe,processInfo._id+'.exe');
+    processInfoUpdated.versions.exeHash=await getFileHash(execPath);
+    processInfoUpdated.versions.zipHash=await getFileHash(finalZipTo);
+    fs.writeFileSync(path.join(CWD,'build',`v${newVersion}+${processInfo._id}.json`),JSON.stringify({
+        "exe": {
+            "Algorithm": "SHA256",
+            "Hash": processInfoUpdated.versions.exeHash,
+            "Path": execPath
+        },
+        "zip": {
+            "Algorithm": "SHA256",
+            "Hash": processInfoUpdated.versions.zipHash,
+            "Path": finalZipTo
+        },
+        "version": newVersion
+    })
+    )
     await uploadFile(finalZipTo,`v${majorVersion}/${processInfo._id}`,uploadZipName, scp_client)
-    
+
+    await updateProcessInfo(apiConfig.root,
+                            apiConfig.apiKey,
+                            dotInfo.id,
+                            newVersion,
+                            processInfoUpdated.versions.url)
+
+    const processInfoLatest=await getProcessInfo(apiConfig.root,apiConfig.apiKey,dotInfo.id);
+    console.log('Updated Process Info:',processInfoLatest)
 }
 
 module.exports={build}
