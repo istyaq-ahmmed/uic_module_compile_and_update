@@ -51,6 +51,7 @@ function formatBytes(bytes, decimals = 2) {
 }
 
 function zipDir(src,out){
+        console.log("Archiving "+path.dirname(src)+' to '+path.dirname(out)+'.')
         const output = fs.createWriteStream(out);
         const archive = archiver('zip', {
         zlib: { level: 9 } // Maximum compression
@@ -133,12 +134,13 @@ function minifyNodeJS(entry,outputDir){
 
 async function runTypeScriptCompile(ts_cwd, outputDir) {
   try {
+    await null
     const tsConfigPath=path.join(ts_cwd,'tsconfig.json');
     const command = `tsc --outDir "${outputDir}" --project "${tsConfigPath}"`;
     console.log(command)
     cp.execSync(command, {
       cwd: ts_cwd,
-      stdio: 'inherit',
+      stdio: 'ignore',
       shell: true
     });
 
@@ -162,7 +164,7 @@ async function compileNodeBackendEnd(cwd,webpackOut,tscOut){
                 }
             }
         }
-        console.log("Compiling Frontend.")
+        console.log("Compiling Backend...")
         let ts_C= await runTypeScriptCompile(cwd,tscOut);
         console.log(ts_C)
         // process.exit()
@@ -228,7 +230,8 @@ async function compileNodeBackendEnd(cwd,webpackOut,tscOut){
     }else{
         return {
             success:false,
-            message:"Frontend is not properly initialized. 1",
+            message:"Frontend is not properly initialized.",
+            err:"ERR: FRONTEND INVALID/NON-EXISTENT #4FF47F "
         }
     }
 }
@@ -244,7 +247,7 @@ function buildNodeEXE(id,exe,srcFile){
             )
         cp.execSync(`node --experimental-sea-config "${seaConfigFile}"`, {
             cwd: exe,
-            stdio: 'inherit',
+            stdio: 'ignore',
             shell: true
         });
         const exeFilePath=path.join(exe,`${id}.exe`)
@@ -252,7 +255,7 @@ function buildNodeEXE(id,exe,srcFile){
         fs.copyFileSync(process.execPath, exeFilePath);
         cp.execSync(`npx postject "${exeFilePath}" NODE_SEA_BLOB "${blobOutPath}" --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2`, {
             cwd: exe,
-            stdio: 'inherit',
+            stdio: 'ignore',
             shell: true
         });
         return true;
@@ -262,24 +265,33 @@ function buildNodeEXE(id,exe,srcFile){
     }
 }
 async function buildNodeBackendEnd(id,cwd,webpackOut,tscOut,exe) {
+    console.log("Compiling Node backend.")
+    const type='compile_backend',
+        sub_type='node_c';
     const cc=await compileNodeBackendEnd(cwd,webpackOut,tscOut)
     if(cc.success){
         try {
             if(buildNodeEXE(id,exe,cc.loc)){
                  return {
+                        type,
+                        sub_type,
                         success:true,
-                        message:"Backend build complete.",
+                        message:"Backend Build Successful.",
                     }
             }
             else{
                  return {
+                        type,
+                        sub_type,
                         success:false,
                         message:"Failed to buildNodeEXE.",
-                        err:'buildNodeEXE'
+                        err:'ERR: NODE EXE CODE INJECTION FAILED #F3552D'
                     }
             }
         } catch (error) {
             return {
+                        type,
+                        sub_type,
                         success:false,
                         message:"Failed to buildNodeEXE 2.",
                         err:error
@@ -288,6 +300,8 @@ async function buildNodeBackendEnd(id,cwd,webpackOut,tscOut,exe) {
         }
     }else{
         return {
+                        type,
+                        sub_type,
                         success:false,
                         message:"Failed to compile backend.",
                         err:error
@@ -299,12 +313,12 @@ function checkForDotEnvAndInstall(cwd,venvPath){
         if(!fs.existsSync(venvPath)){
             cp.execSync(`python -m venv .env`, {
                 cwd: cwd,
-                stdio: 'inherit',
+                stdio: 'ignore',
                 shell: true
             });
             cp.execSync(`"${path.join(venvPath,"Scripts", "python.exe")}" install -r requirements.txt`, {
                 cwd: cwd,
-                stdio: 'inherit',
+                stdio: 'ignore',
                 shell: true
             });
             return 'OK';
@@ -326,34 +340,43 @@ function getFileHash(filePath, algorithm = "sha256") {
   });
 }
 async function buildPython(cwd,version) {
+    console.log("Compiling Python Backend.")
     try {
+        const type='compile_backend',
+            sub_type='py_c';
         const venvPath=path.join(cwd,'.env');
         const venvCheck=checkForDotEnvAndInstall(cwd,venvPath);
         if(venvCheck=='OK'){
             cp.execSync(`"${path.join(venvPath,"Scripts", "python.exe")}" setup.py --quiet ${version} build`, {
                 cwd: cwd,
-                stdio: 'inherit',
+                stdio: 'ignore',
                 shell: true
             });
+            console.log("Compiling Python Backend Done.")
             return {
-                success:true,
-                message: "OK"
+                    type,
+                    sub_type,
+                    success:true,
+                    message: "Python Backend Compiled Successfully."
             }
         }
     } catch (error) {
         return {
+                type,
+                sub_type,
                 success:false,
-                message: "Python compilation failed."
+                message: "Python Backend compilation failed.",
+                err:error
             }
     }
 }
 
 async function runFrontEndCompileCommand(f_cwd,output){
     try {
-        console.log('Foutput', output)
+        // console.log('Foutput', output)
         cp.execSync(`npx vite build --outDir "${output}"`, {
         cwd: f_cwd,
-        stdio: 'inherit', // stream output directly to console
+        stdio: 'ignore', // stream output directly to console
         shell:true
         });
         return true;
@@ -363,9 +386,10 @@ async function runFrontEndCompileCommand(f_cwd,output){
 }
 async function npmInstall(f_cwd){
   try {
+    await null
     cp.execSync('npm.cmd i', {
       cwd: f_cwd,
-      stdio: 'inherit', // stream output directly to console
+      stdio: 'ignore', // stream output directly to console
       shell:true
     });
     return true  
@@ -375,28 +399,32 @@ async function npmInstall(f_cwd){
 }
 
 async function compileFrontEnd(loc,out){
+    const type="frontend_compile"
     const node_modules_exists=dirExists(path.join(loc,'node_modules'));
     const package_json_exists=fileExists(path.join(loc,'package.json'));
     let npmInit
+    console.log("Compiling Frontend...")
     if(package_json_exists){
         if(!node_modules_exists) {
             npmInit=await npmInstall(loc);
             if(npmInit!==true){
                 return {
+                    type,
                     success:false,
                     message:"Failed to run npm install.",
                     err:npmInit
                 }
             }
         }
-        console.log("Compiling Frontend.")
         let front_C=await runFrontEndCompileCommand(loc,out);
-        console.log(front_C)
+        console.log('front_C',front_C)
         // process.exit()
         if(front_C===true){
+            console.log("Frontend Done")
             return {
+                    type,
                     success:true,
-                    message:"Frontend Compiled.",
+                    message:"Frontend Compiled Successfully.",
                 }
         }else{
             if(npmInit==null){
@@ -405,12 +433,15 @@ async function compileFrontEnd(loc,out){
                 if(npmInit===true){
                     front_C=runFrontEndCompileCommand(loc,out);
                     if(front_C===true){
+                        console.log("Frontend Done.")
                         return {
+                            type,
                             success:true,
-                            message:"Frontend Compiled.",
+                            message:"Frontend Compiled Successfully.",
                         }
                     }else{
                         return {
+                            type,
                             success:false,
                             message:"Frontend Compilation failed.",
                             err:front_C
@@ -419,6 +450,7 @@ async function compileFrontEnd(loc,out){
 
                 }else{
                     return {
+                        type,
                         success:false,
                         message:"Failed to run npm install.",
                         err:npmInit
@@ -427,15 +459,17 @@ async function compileFrontEnd(loc,out){
                 }
             }else{
                 return {
+                    type,
                     success:false,
                     message:"Frontend Compilation failed, manually check for errors.",
-                    err:npmInit
+                    err:npmInit,
                 }
             }
         }
         
     }else{
         return {
+            type,
             success:false,
             message:"Frontend is not properly initialized. 1",
         }
@@ -545,9 +579,10 @@ function getDotInfo(cwd) {
         throw new Error('Error getting .info file.')
     }
 }
-function incrementVersion(v=''){
+function incrementVersion(v='',majorVersion='2'){
     const vSplit=v.split('.');
     vSplit[vSplit.length-1]=String(Number(vSplit[vSplit.length-1])+1)
+    vSplit[0]=majorVersion;
     return vSplit.join('.');
 }
 function makeRequiredDirs(root,environment='nodeJS'){

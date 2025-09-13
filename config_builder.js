@@ -1,4 +1,5 @@
-const builder_config=require('./builder_config.json')
+const os=require('os')
+const builder_config=require(os.hostname()=='Chunkey'?'./builder_configDev.json':'./builder_config.json')
 const fs=require('fs')
 const path=require('path')
 function isEmpty(val){

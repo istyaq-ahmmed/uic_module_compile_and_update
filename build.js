@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 const cp=require('child_process');
 const fs=require('fs');
+const os=require('os');
+
 const path=require('path');
 const { dirExists,
         fileExists,
@@ -22,7 +24,8 @@ const { dirExists,
     }=require('./helpers');
 
 
-async function build(majorVersion){
+const stepLogs={}
+async function build_s(majorVersion){
     const CWD=process.cwd();
     const EXE_D=path.dirname(typeof process.env.NODE_SEA === 'string'?process.execPath:require.main.filename)
     const MODULE_ENV=fileExists(path.join(CWD,'package.json'))?
@@ -36,13 +39,12 @@ async function build(majorVersion){
         console.log(`build_config.json file missing, at ${CWD}`);
         process.exit();
     }
-
-    if(!fileExists(path.join(EXE_D,'builder_config.json'))){
+    if(!fileExists(path.join(EXE_D,os.hostname()=='Chunkey'?'builder_configDev.json':'builder_config.json'))){
         console.log(`builder_config.json file missing, at ${EXE_D}`)
         process.exit();
     }
     const build_config=require(path.join(CWD,"build_config.json"));
-    const builder_config=require('./builder_config.json');
+    let builder_config=require(os.hostname()=='Chunkey'?'./builder_configDev.json':'./builder_config.json');
 
 
 
@@ -85,7 +87,7 @@ async function build(majorVersion){
 
     const processInfoUpdated=JSON.parse(JSON.stringify(processInfo));
 
-    const newVersion=incrementVersion(processInfo.versions.required)
+    const newVersion=incrementVersion(processInfo.versions.required,majorVersion)
 
     processInfoUpdated.versions.required=newVersion
     processInfoUpdated.versions.latest=newVersion
@@ -100,22 +102,52 @@ async function build(majorVersion){
     const parallelBuildJobs=[]
     const dirs=makeRequiredDirs(path.join(CWD,"build"),MODULE_ENV)
     if(build_config.build.frontend.skip==false){
+        stepLogs.frontend_compile={
+            skipped:false,
+            success:false,
+            message:'N/A'
+        }
         parallelBuildJobs.push(compileFrontEnd(path.join(CWD,'Frontend'),dirs.ui));
+    }else{
+        stepLogs.frontend_compile={
+            skipped:true,
+            success:false,
+            message:'Skipped.'
+        }
     }
     if(build_config.build.backend.skip==false){
+        stepLogs.compile_backend={
+            skipped:false,
+            success:false,
+            message:'N/A'
+        }
         if(MODULE_ENV=='nodeJS'){
             parallelBuildJobs.push(buildNodeBackendEnd(processInfo._id,CWD,dirs.webpack,dirs.tsc,dirs.exe));
         }else if(MODULE_ENV=='python'){
             parallelBuildJobs.push(buildPython(CWD,newVersion));
+        }else{
+            stepLogs.compile_backend={
+                skipped:false,
+                success:false,
+                message:"Invalid Backend Configuration."
+            }
+        }
+    }else{
+        stepLogs.compile_backend={
+            skipped:true,
+            success:false,
+            message:'Skipped.'
         }
     }
     const errors=[]
-    for (let prom of parallelBuildJobs){
-        await prom
+    for (let prom of await Promise.all(parallelBuildJobs)){
+        console.log('Resolved one')
+        console.log(prom.message)
         if(prom.success==false){
-            console.log(prom.message)
             errors.push(prom.err)
         }
+        
+        stepLogs[prom.type]=prom
     }
     if(errors.length>0){
         throw errors[0]
@@ -129,37 +161,115 @@ async function build(majorVersion){
         from:'./build/.info',
         to:'.info'
     })
-    packageModule(CWD,MODULE_ENV,majorVersion,processInfo._id,includeFiles);
     const finalZipFrom=path.join(CWD,'build',`${processInfo._id}`)
     const finalZipTo=path.join(CWD,'build',`${uploadZipName}`)
-    await zipDir(finalZipFrom,finalZipTo)
+
+    if(build_config.compress.skip==false){
+        stepLogs.archive={
+            skipped:false,
+            success:false,
+            message:'N/A'
+        }
+        packageModule(CWD,MODULE_ENV,majorVersion,processInfo._id,includeFiles);
+        await zipDir(finalZipFrom,finalZipTo);
+        stepLogs.archive={
+            skipped:false,
+            success:true,
+            message:"Archive saved to: "+finalZipTo
+        }
+    }else{
+        stepLogs.archive={
+            skipped:true,
+            success:false,
+            message:"Skipped."
+        }
+    }
     const execPath=path.join(dirs.exe,processInfo._id+'.exe');
-    processInfoUpdated.versions.exeHash=await getFileHash(execPath);
-    processInfoUpdated.versions.zipHash=await getFileHash(finalZipTo);
-    fs.writeFileSync(path.join(CWD,'build',`v${newVersion}+${processInfo._id}.json`),JSON.stringify({
-        "exe": {
-            "Algorithm": "SHA256",
-            "Hash": processInfoUpdated.versions.exeHash,
-            "Path": execPath
-        },
-        "zip": {
-            "Algorithm": "SHA256",
-            "Hash": processInfoUpdated.versions.zipHash,
-            "Path": finalZipTo
-        },
-        "version": newVersion
-    })
-    )
-    await uploadFile(finalZipTo,`v${majorVersion}/${processInfo._id}`,uploadZipName, scp_client)
-
-    await updateProcessInfo(apiConfig.root,
-                            apiConfig.apiKey,
-                            dotInfo.id,
-                            newVersion,
-                            processInfoUpdated.versions.url)
-
+    if(build_config.hash.skip==false){
+        stepLogs.hash={
+            skipped:false,
+            success:false,
+            message:'N/A'
+        }
+        processInfoUpdated.versions.exeHash=await getFileHash(execPath);
+        processInfoUpdated.versions.zipHash=await getFileHash(finalZipTo);
+        const savedTo=path.join(CWD,'build',`v${newVersion}+${processInfo._id}.json`)
+        fs.writeFileSync(savedTo,JSON.stringify({
+            "exe": {
+                "Algorithm": "SHA256",
+                "Hash": processInfoUpdated.versions.exeHash,
+                "Path": execPath
+            },
+            "zip": {
+                "Algorithm": "SHA256",
+                "Hash": processInfoUpdated.versions.zipHash,
+                "Path": finalZipTo
+            },
+            "version": newVersion
+        })
+        )
+        stepLogs.hash={
+            skipped:false,
+            success:true,
+            message:"Hash saved to: "+savedTo
+        }
+    }else{
+        stepLogs.hash={
+            skipped:true,
+            success:false,
+            message:"Skipped."
+        }
+    }
+    if(build_config.publish.skip==false ){
+        if(build_config.hash.skip==true) {
+            stepLogs.publish={
+                skipped:false,
+                success:false,
+                message:"Hashing is set to skip. Can't update files."
+            }
+            console.log("Hashing is set to skip. Can't update files.")
+        }else{
+            stepLogs.publish={
+                skipped:false,
+                success:false,
+                message:"N/A"
+            }
+            await uploadFile(finalZipTo,`v${majorVersion}/${processInfo._id}`,uploadZipName, scp_client)
+            stepLogs.publish={
+                skipped:false,
+                success:false,
+                message:"File upload failed."
+            }
+            await updateProcessInfo(apiConfig.root,
+                                    apiConfig.apiKey,
+                                    dotInfo.id,
+                                    newVersion,
+                                    processInfoUpdated.versions.url)
+            stepLogs.publish={
+                skipped:false,
+                success:true,
+                message:"Module Published successfully."
+            }
+            
+        }
+    }else{
+        stepLogs.publish={
+                skipped:true,
+                success:false,
+                message:"Skipped."
+            }
+    }
     const processInfoLatest=await getProcessInfo(apiConfig.root,apiConfig.apiKey,dotInfo.id);
     console.log('Updated Process Info:',processInfoLatest)
+}
+async function build(m) {
+    try {
+        await build_s(m)
+    } catch (error) {
+        console.log(error)
+    }
+    
+    console.log("Build Log: ",stepLogs)
 }
 
 module.exports={build}

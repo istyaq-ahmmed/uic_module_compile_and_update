@@ -14,7 +14,6 @@ program
   .action(async (options) => {
       if(checkConfig(options.version)){
             await build(options.version);
-            console.log("✅ Build finished!");
             process.exit()
         }
   });
